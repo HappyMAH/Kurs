@@ -1,0 +1,63 @@
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: warehouse_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-warehouse_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-warehouse_pass}
+      POSTGRES_DB:       ${POSTGRES_DB:-warehouse_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-warehouse_user} -d ${POSTGRES_DB:-warehouse_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - warehouse_net
+
+  # ── FastAPI Backend ─────────────────────────────────────────────────────────
+  app:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: warehouse_app
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      POSTGRES_HOST: db
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - warehouse_net
+    # Порт открываем только для разработки; в проде — только через nginx
+    ports:
+      - "8000:8000"
+
+  # ── Nginx (обратный прокси + фронтенд) ────────────────────────────────────
+  nginx:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+    container_name: warehouse_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+    networks:
+      - warehouse_net
+
+volumes:
+  postgres_data:
+
+networks:
+  warehouse_net:
+    driver: bridge
